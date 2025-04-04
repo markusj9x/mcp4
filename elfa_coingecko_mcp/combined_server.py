@@ -20,7 +20,7 @@ class Config:
     ELFA_API_KEY = "elfak_9da97adea0a74a1b78d414d846c160f8ecb180b4" # Hardcoded API Key
     LOG_LEVEL = logging.INFO
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    LOGGER_NAME = "multimcps-server"
+    LOGGER_NAME = "elfa-coingecko-mcp" # Updated logger name
 
 logger = logging.getLogger(Config.LOGGER_NAME)
 logger.setLevel(Config.LOG_LEVEL)
@@ -33,7 +33,8 @@ logger.addHandler(handler)
 async def call_elfa_api(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Helper function to call the ELFA AI API."""
     url = f"{Config.ELFA_API_BASE_URL}{endpoint}"
-    headers = {"X-API-Key": Config.ELFA_API_KEY}
+    # Use the exact header name from the documentation
+    headers = {"x-elfa-api-key": Config.ELFA_API_KEY} 
     logger.info(f"Calling ELFA API: {url} with params: {params}")
     try:
         async with aiohttp.ClientSession() as session:
@@ -56,6 +57,7 @@ class MultiMCPServer:
     def __init__(self):
         self.server = None
 
+    # --- CoinGecko Tool ---
     async def get_coin_price(self, coin_id: str) -> Dict[str, Any]:
         """Fetches the current price of a coin from CoinGecko."""
         url = f"{Config.COINGECKO_API_URL}/simple/price?ids={coin_id}&vs_currencies=usd"
@@ -77,6 +79,7 @@ class MultiMCPServer:
             logger.exception(f"Error fetching price for coin_id: {e}")
             return {"price": None}
 
+    # --- ELFA AI Tools ---
     async def search_twitter_mentions(self, keywords: List[str], from_timestamp: int, to_timestamp: int, limit: Optional[int] = 20, searchType: Optional[str] = None, cursor: Optional[str] = None) -> Dict[str, Any]:
         """Searches for mentions of specific keywords on Twitter using ELFA AI API."""
         endpoint = "/v1/mentions/search"
@@ -109,112 +112,110 @@ class MultiMCPServer:
             "minMentions": minMentions
         }
         return await call_elfa_api(endpoint, params)
+        
+    async def get_mentions_with_smart_engagement(self, limit: Optional[int] = 100, offset: Optional[int] = 0) -> Dict[str, Any]:
+        """Query tweets by smart accounts with high smart interaction."""
+        endpoint = "/v1/mentions"
+        params = {"limit": limit, "offset": offset}
+        return await call_elfa_api(endpoint, params)
 
+    async def get_top_mentions(self, ticker: str, timeWindow: Optional[str] = "1h", page: Optional[int] = 1, pageSize: Optional[int] = 10, includeAccountDetails: Optional[bool] = False) -> Dict[str, Any]:
+        """Query tweets that mentioned a specified ticker, ranked by view count."""
+        endpoint = "/v1/top-mentions"
+        params = {
+            "ticker": ticker,
+            "timeWindow": timeWindow,
+            "page": page,
+            "pageSize": pageSize,
+            "includeAccountDetails": includeAccountDetails
+        }
+        return await call_elfa_api(endpoint, params)
 
+    # --- MCP Server Setup ---
     async def initialize(self) -> Server:
         if not self.server: # Initialize only once
              self.server = self._create_server()
         return self.server
 
     def _create_server(self) -> Server:
-        app = Server("multimcps-server")
+        app = Server("elfa-coingecko-mcp") # Updated server name
 
         @app.list_tools()
         async def list_tools() -> List[Dict[str, Any]]:
             return [
-                {
+                { # CoinGecko Tool
                     "name": "get_coin_price",
                     "description": "Gets the current price of a coin from CoinGecko.",
                     "inputSchema": {
                         "type": "object",
-                        "properties": {
-                            "coin_id": {
-                                "type": "string",
-                                "description": "The CoinGecko ID of the coin (e.g., bitcoin, ethereum)."
-                            }
-                        },
+                        "properties": { "coin_id": { "type": "string", "description": "The CoinGecko ID of the coin (e.g., bitcoin, ethereum)."}},
                         "required": ["coin_id"]
                     }
                 },
-                {
+                { # ELFA Tool 1
                     "name": "search_twitter_mentions",
                     "description": "Searches for mentions of specific keywords on Twitter using ELFA AI API.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "keywords": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "List of keywords to search for (max 5)."
-                            },
-                            "from_timestamp": {
-                                "type": "integer",
-                                "description": "Start date (Unix timestamp)."
-                            },
-                            "to_timestamp": {
-                                "type": "integer",
-                                "description": "End date (Unix timestamp)."
-                            },
-                             "limit": {
-                                "type": "integer",
-                                "description": "Number of results to return (default 20, max 30).",
-                                "default": 20
-                            },
-                            "searchType": {
-                                "type": "string",
-                                "description": "Type of search (and, or).",
-                                "enum": ["and", "or"]
-                            },
-                            "cursor": {
-                                "type": "string",
-                                "description": "Cursor for pagination."
-                            }
+                            "keywords": { "type": "array", "items": { "type": "string" }, "description": "List of keywords to search for (max 5)." },
+                            "from_timestamp": { "type": "integer", "description": "Start date (Unix timestamp)." },
+                            "to_timestamp": { "type": "integer", "description": "End date (Unix timestamp)." },
+                             "limit": { "type": "integer", "description": "Number of results to return (default 20, max 30).", "default": 20 },
+                            "searchType": { "type": "string", "description": "Type of search (and, or).", "enum": ["and", "or"] },
+                            "cursor": { "type": "string", "description": "Cursor for pagination." }
                         },
                         "required": ["keywords", "from_timestamp", "to_timestamp"]
                     }
                 },
-                 {
+                 { # ELFA Tool 2
                     "name": "get_account_smart_stats",
                     "description": "Retrieve smart stats and social metrics for a given Twitter username.",
                     "inputSchema": {
                         "type": "object",
-                        "properties": {
-                            "username": {
-                                "type": "string",
-                                "description": "Twitter username (without @)."
-                            }
-                        },
+                        "properties": { "username": { "type": "string", "description": "Twitter username (without @)." }},
                         "required": ["username"]
                     }
                 },
-                {
+                { # ELFA Tool 3
                     "name": "get_trending_tokens",
                     "description": "Query tokens most discussed in a particular time period.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "timeWindow": {
-                                "type": "string",
-                                "description": "Time window for trending analysis (e.g., 1h, 24h, 7d).",
-                                "default": "24h"
-                            },
-                             "page": {
-                                "type": "integer",
-                                "description": "Page number for pagination.",
-                                "default": 1
-                            },
-                            "pageSize": {
-                                "type": "integer",
-                                "description": "Number of items per page.",
-                                "default": 50
-                            },
-                            "minMentions": {
-                                "type": "integer",
-                                "description": "Minimum number of mentions required.",
-                                "default": 5
-                            }
+                            "timeWindow": { "type": "string", "description": "Time window for trending analysis (e.g., 1h, 24h, 7d).", "default": "24h" },
+                             "page": { "type": "integer", "description": "Page number for pagination.", "default": 1 },
+                            "pageSize": { "type": "integer", "description": "Number of items per page.", "default": 50 },
+                            "minMentions": { "type": "integer", "description": "Minimum number of mentions required.", "default": 5 }
                         },
                         "required": [] # All parameters have defaults
+                    }
+                },
+                { # ELFA Tool 4 (New)
+                    "name": "get_mentions_with_smart_engagement",
+                    "description": "Query tweets by smart accounts with high smart interaction.",
+                     "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "limit": { "type": "integer", "description": "Number of results to return (default 100).", "default": 100 },
+                            "offset": { "type": "integer", "description": "Offset for pagination.", "default": 0 }
+                        },
+                        "required": [] # All parameters have defaults
+                    }
+                },
+                 { # ELFA Tool 5 (New)
+                    "name": "get_top_mentions",
+                    "description": "Query tweets that mentioned a specified ticker, ranked by view count.",
+                     "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                             "ticker": { "type": "string", "description": "The ticker symbol to get mentions for (e.g., BTC, $ETH)." },
+                             "timeWindow": { "type": "string", "description": "Time window for mentions (e.g., 1h, 24h, 7d).", "default": "1h" },
+                             "page": { "type": "integer", "description": "Page number for pagination.", "default": 1 },
+                             "pageSize": { "type": "integer", "description": "Number of items per page.", "default": 10 },
+                             "includeAccountDetails": { "type": "boolean", "description": "Include account details.", "default": False }
+                        },
+                        "required": ["ticker"]
                     }
                 }
             ]
@@ -222,6 +223,7 @@ class MultiMCPServer:
         @app.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
             try:
+                result = None
                 if name == "get_coin_price":
                     coin_id = arguments.get("coin_id")
                     if not coin_id: raise ValueError("coin_id is required")
@@ -238,7 +240,7 @@ class MultiMCPServer:
                         keywords, 
                         from_timestamp, 
                         to_timestamp,
-                        arguments.get("limit"),
+                        arguments.get("limit", 20), # Use default if not provided
                         arguments.get("searchType"),
                         arguments.get("cursor")
                     )
@@ -248,11 +250,26 @@ class MultiMCPServer:
                      result = await self.get_account_smart_stats(username)
                 elif name == "get_trending_tokens":
                      result = await self.get_trending_tokens(
-                         arguments.get("timeWindow"),
-                         arguments.get("page"),
-                         arguments.get("pageSize"),
-                         arguments.get("minMentions")
+                         arguments.get("timeWindow", "24h"), # Use default if not provided
+                         arguments.get("page", 1),
+                         arguments.get("pageSize", 50),
+                         arguments.get("minMentions", 5)
                      )
+                elif name == "get_mentions_with_smart_engagement":
+                     result = await self.get_mentions_with_smart_engagement(
+                         arguments.get("limit", 100),
+                         arguments.get("offset", 0)
+                     )
+                elif name == "get_top_mentions":
+                    ticker = arguments.get("ticker")
+                    if not ticker: raise ValueError("ticker is required")
+                    result = await self.get_top_mentions(
+                        ticker,
+                        arguments.get("timeWindow", "1h"),
+                        arguments.get("page", 1),
+                        arguments.get("pageSize", 10),
+                        arguments.get("includeAccountDetails", False)
+                    )
                 else:
                     raise ValueError(f"Unknown tool: {name}")
 
